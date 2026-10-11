@@ -174,6 +174,25 @@ void Ed25519::sign(uint8_t signature[64], const uint8_t privateKey[32],
 }
 
 /**
+ * \brief Determines if the S half of a signature is below the group order q.
+ *
+ * \param s The 32 bytes of S, little-endian.
+ *
+ * \return Returns true if S < q.
+ *
+ * RFC 8032 requires it: S + q, S + 2q, ... verify like S, so without the
+ * check one signature has several valid encodings.  The signature is
+ * public, so this does not need to run in constant time.
+ */
+static bool isCanonicalS(const uint8_t s[32])
+{
+    limb_t S[NUM_LIMBS_256BIT];
+    limb_t diff[NUM_LIMBS_256BIT];
+    BigNumberUtil::unpackLE(S, NUM_LIMBS_256BIT, s, 32);
+    return BigNumberUtil::sub_P(diff, S, numQ, NUM_LIMBS_256BIT) != 0;
+}
+
+/**
  * \brief Verifies a signature using a specific Ed25519 public key.
  *
  * \param signature The signature value to be verified.
@@ -183,6 +202,9 @@ void Ed25519::sign(uint8_t signature[64], const uint8_t privateKey[32],
  *
  * \return Returns true if the \a signature is valid for \a message;
  * or false if the \a signature is not valid.
+ *
+ * A signature whose S half is not below the group order is not valid
+ * (RFC 8032, section 5.1.7).
  *
  * \sa sign()
  */
@@ -197,8 +219,9 @@ bool Ed25519::verify(const uint8_t signature[64], const uint8_t publicKey[32],
     uint8_t *k = (uint8_t *)(hash.state.w); // Reuse hash buffer to save memory.
     bool result = false;
 
-    // Decode the public key and the R component of the signature.
-    if (decodePoint(A, publicKey) && decodePoint(R, signature)) {
+    // Check S, then decode the public key and the R component of the signature.
+    if (isCanonicalS(signature + 32) && decodePoint(A, publicKey) &&
+            decodePoint(R, signature)) {
         // Reconstruct the k value from the signing step.
         hash.reset();
         hash.update(signature, 32);
